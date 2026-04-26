@@ -45,6 +45,32 @@ def test_end_to_end_demo_path():
     assert health["ok"]
 
 
+def test_modify_with_empty_dict_does_not_silently_recommit_suggestion():
+    """Reviewer modifying an action to `{}` must NOT re-commit the original suggestion."""
+    orch = ClinicalOrchestrator()
+    pid = "P-MOD"
+    orch.upsert_patient(pid)
+    orch.ingest_transcript(
+        pid,
+        "S: cough\nO: BP 130/80\nA: Hypertension under control\nP: Continue meds",
+    )
+    pending = orch.pending_reviews(patient_id=pid)
+    assert pending, "expected at least one pending action from documentation"
+
+    doc_action = next(a for a in pending if a.actor == "documentation")
+    # Modify with empty dict -> payload should be {}, so nothing committed.
+    orch.modify(doc_action.action_id, reviewer="dr.test", final_action={})
+
+    patient = orch.registry.get(pid)
+    assert patient is not None
+    assert patient.codes == [], (
+        f"empty-dict modify silently re-committed original suggestion; got codes={patient.codes!r}"
+    )
+    assert patient.soap_note == {}, (
+        f"empty-dict modify silently re-committed original SOAP; got {patient.soap_note!r}"
+    )
+
+
 def test_cross_collab_diagnostic_finding_updates_soap():
     orch = ClinicalOrchestrator()
     pid = "P-X1"

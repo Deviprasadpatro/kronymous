@@ -186,7 +186,10 @@ class ClinicalOrchestrator:
         patient = self.registry.get(action.patient_id)
         if not patient:
             return
-        payload = action.final_action or action.suggested_action
+        # NB: explicit `is None` check — an empty-dict modification (`{}`) means
+        # "the reviewer cleared every field" and must not silently fall back to
+        # the original suggestion. Truthiness check would re-commit it.
+        payload = action.final_action if action.final_action is not None else action.suggested_action
         if action.actor == "documentation":
             soap = payload.get("soap", {})
             if isinstance(soap, dict):
