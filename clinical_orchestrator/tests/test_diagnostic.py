@@ -37,6 +37,26 @@ def test_pathology_carcinoma_is_critical():
     assert "Malignancy — staging required" in out["suggestion"]["differential"]
 
 
+def test_severity_is_max_not_last():
+    """A later warning-level finding must not downgrade an earlier critical."""
+    agent = _agent()
+    # Patient with TB on the problem list -> history sub-agent emits a critical-keyword
+    # finding first; then an imaging study with 'consolidation' (warning) follows.
+    # Final severity must remain 'critical', not be overwritten to 'warning'.
+    p = PatientContext(patient_id="P1", conditions=["tuberculosis"])
+    out = agent.run(
+        p,
+        imaging_studies=[{
+            "modality": "Chest X-ray",
+            "image_id": "CXR-2",
+            "features": ["consolidation"],
+        }],
+    )
+    assert out["severity"] == "critical", (
+        f"severity downgraded by later finding (got {out['severity']!r})"
+    )
+
+
 def test_history_subagent_emits_problem_list():
     agent = _agent()
     p = PatientContext(

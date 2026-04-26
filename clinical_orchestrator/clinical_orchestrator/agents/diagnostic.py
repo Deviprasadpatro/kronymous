@@ -95,23 +95,31 @@ class DiagnosticAgent(Agent):
         return any("Active problem list" in f.description for f in out)
 
     # ------------------------------------------------------------------
+    _SEVERITY_RANK = {"info": 0, "notice": 1, "warning": 2, "critical": 3}
+
     def _summarize(self, findings: list[Finding]) -> tuple[list[str], str]:
         differential: list[str] = []
         severity = "info"
+
+        def bump(level: str) -> None:
+            nonlocal severity
+            if self._SEVERITY_RANK[level] > self._SEVERITY_RANK[severity]:
+                severity = level
+
         for f in findings:
             d = f.description.lower()
             if "pneumonia" in d or "consolidation" in d:
                 differential.append("Community-acquired pneumonia")
-                severity = "warning"
+                bump("warning")
             if "cardiomegaly" in d or "heart failure" in d:
                 differential.append("Decompensated heart failure")
-                severity = "warning"
+                bump("warning")
             if "carcinoma" in d or "adenocarcinoma" in d:
                 differential.append("Malignancy — staging required")
-                severity = "critical"
+                bump("critical")
             if "tuberculosis" in d or "acid-fast" in d:
                 differential.append("Active tuberculosis")
-                severity = "critical"
+                bump("critical")
         # Dedupe preserving order.
         seen: set[str] = set()
         differential = [d for d in differential if not (d in seen or seen.add(d))]
