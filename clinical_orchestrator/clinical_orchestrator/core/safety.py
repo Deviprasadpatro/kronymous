@@ -12,7 +12,10 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .storage import Storage
 
 ReviewStatus = Literal["pending", "confirmed", "modified", "rejected"]
 
@@ -43,9 +46,25 @@ class SafetyGate:
 
     CRITICAL_THRESHOLD = "critical"
 
-    def __init__(self) -> None:
+    def __init__(self, storage: Storage | None = None) -> None:
+        self.storage = storage
         self._pending: dict[str, PendingAction] = {}
         self._lock = threading.RLock()
+        # Replay any persisted actions so a restarted process resumes the queue.
+        if storage is not None:
+            try:
+                for a in storage.load_actions():
+                    self._pending[a.action_id] = a
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+    def _persist(self, action: PendingAction) -> None:
+        if self.storage is None:
+            return
+        try:
+            self.storage.save_action(action)
+        except Exception:  # pragma: no cover - defensive
+            pass
 
     # -- submission ------------------------------------------------------
     def propose(
@@ -70,6 +89,7 @@ class SafetyGate:
         )
         with self._lock:
             self._pending[action.action_id] = action
+        self._persist(action)
         return action
 
     # -- review ----------------------------------------------------------
@@ -99,7 +119,8 @@ class SafetyGate:
             action.reviewer = reviewer
             action.reviewed_at = time.time()
             action.final_action = final if final is not None else action.suggested_action if status == "confirmed" else None
-            return action
+        self._persist(action)
+        return action
 
     # -- queries ---------------------------------------------------------
     def pending(self, patient_id: str | None = None) -> list[PendingAction]:

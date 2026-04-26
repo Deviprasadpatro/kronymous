@@ -10,7 +10,10 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .storage import Storage
 
 
 @dataclass
@@ -97,16 +100,32 @@ class PatientContext:
 
 
 class PatientRegistry:
-    """In-memory store keyed by ``patient_id``."""
+    """In-memory store keyed by ``patient_id`` with optional Storage mirror."""
 
-    def __init__(self) -> None:
+    def __init__(self, storage: Storage | None = None) -> None:
+        self.storage = storage
         self._patients: dict[str, PatientContext] = {}
         self._lock = threading.RLock()
+        if storage is not None:
+            try:
+                for p in storage.list_patients():
+                    self._patients[p.patient_id] = p
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+    def _persist(self, patient: PatientContext) -> None:
+        if self.storage is None:
+            return
+        try:
+            self.storage.save_patient(patient)
+        except Exception:  # pragma: no cover - defensive
+            pass
 
     def get_or_create(self, patient_id: str, **kwargs: Any) -> PatientContext:
         with self._lock:
             if patient_id not in self._patients:
                 self._patients[patient_id] = PatientContext(patient_id=patient_id, **kwargs)
+                self._persist(self._patients[patient_id])
             return self._patients[patient_id]
 
     def get(self, patient_id: str) -> PatientContext | None:
@@ -116,3 +135,7 @@ class PatientRegistry:
     def all(self) -> list[PatientContext]:
         with self._lock:
             return list(self._patients.values())
+
+    def save(self, patient: PatientContext) -> None:
+        """Mirror an in-memory mutation to durable storage (if any)."""
+        self._persist(patient)

@@ -7,7 +7,10 @@ import os
 import threading
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .storage import Storage
 
 
 @dataclass
@@ -20,12 +23,19 @@ class AuditEntry:
 
 
 class AuditLog:
-    """Thread-safe in-memory audit log with optional JSONL persistence."""
+    """Thread-safe in-memory audit log with optional JSONL + Storage mirror."""
 
-    def __init__(self, path: str | None = None) -> None:
+    def __init__(self, path: str | None = None, storage: Storage | None = None) -> None:
         self.path = path or os.environ.get("CLINICAL_ORCHESTRATOR_AUDIT_PATH")
+        self.storage = storage
         self._entries: list[AuditEntry] = []
         self._lock = threading.RLock()
+        # Replay from durable storage if present so a fresh process sees history.
+        if storage is not None:
+            try:
+                self._entries.extend(storage.list_audit())
+            except Exception:  # pragma: no cover - defensive
+                pass
 
     def record(
         self,
@@ -42,6 +52,11 @@ class AuditLog:
                     with open(self.path, "a", encoding="utf-8") as fh:
                         fh.write(json.dumps(asdict(entry)) + "\n")
                 except OSError:  # pragma: no cover - defensive
+                    pass
+            if self.storage is not None:
+                try:
+                    self.storage.append_audit(entry)
+                except Exception:  # pragma: no cover - defensive
                     pass
         return entry
 

@@ -23,12 +23,24 @@ time.
 
 ## Cross-collaboration framework
 
-A lightweight in-process **publish / subscribe event bus**
-(`core/event_bus.py`) lets every agent emit and consume `ClinicalEvent`s
-(e.g. `diagnostic.finding`, `vitals.deviation`, `documentation.update`).
-The orchestrator registers default subscriptions so that, for example, a new
-imaging finding automatically updates the current SOAP note and the chronic
-care risk dashboard — exactly as required by the master prompt.
+A **publish / subscribe event bus** (`core/event_bus.py`) lets every
+agent emit and consume `ClinicalEvent`s (e.g. `diagnostic.finding`,
+`vitals.deviation`, `documentation.update`). The orchestrator registers
+default subscriptions so that, for example, a new imaging finding
+automatically updates the current SOAP note and the chronic care risk
+dashboard — exactly as required by the master prompt.
+
+The transport is **pluggable** via `CLINICAL_BUS_URL`:
+
+| URL | Backend | Notes |
+| --- | --- | --- |
+| `memory://` *(default)* | In-process | Single-host; zero deps |
+| `redis://host:6379/0?stream=clinical` | Redis Streams | `pip install -e ".[redis]"` |
+| `kafka://broker:9092?topic=clinical&group=orchestrator` | Confluent Kafka | `pip install -e ".[kafka]"` |
+
+If a configured broker is unreachable or its client library is missing,
+the bus **degrades to in-process** rather than crashing — consistent with
+the orchestrator's "self-debug & graceful fallback" stance.
 
 ## Self-debug & auto-recovery
 
@@ -58,10 +70,49 @@ uvicorn clinical_orchestrator.api.server:app --reload --port 8000
 ```
 
 The system runs **fully offline by default** using deterministic
-rule-based agents so it can be tested end-to-end in CI. To plug in a
-real LLM, set `OPENAI_API_KEY` and install the `llm` extra
-(`pip install -e ".[llm]"`); the LLM provider in `core/llm.py` will
-use it automatically and fall back to the rule-based path on any error.
+rule-based agents so it can be tested end-to-end in CI.
+
+### LLM providers
+
+Three OpenAI-compatible providers are supported behind one router; pick via
+`CLINICAL_LLM_PROVIDER` (`auto` is the default and tries them in order):
+
+| Provider | Env keys | Install extra |
+| --- | --- | --- |
+| OpenAI | `OPENAI_API_KEY` (+ `OPENAI_MODEL`) | `pip install -e ".[openai]"` |
+| Anthropic | `ANTHROPIC_API_KEY` (+ `ANTHROPIC_MODEL`) | `pip install -e ".[anthropic]"` |
+| Gemini | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) (+ `GEMINI_MODEL`) | `pip install -e ".[gemini]"` |
+| All three | — | `pip install -e ".[llm]"` |
+
+If no key is present, the router reports `provider="none"` and every
+`complete*()` call returns `None` so agents transparently fall back to their
+rule-based path. JSON-mode is supported via `complete_json(...)`.
+
+### Persistent storage
+
+`CLINICAL_STORAGE_URL` selects where patients, HITL actions, and the audit
+log are mirrored:
+
+| URL | Backend |
+| --- | --- |
+| `memory://` *(default)* | In-process only |
+| `sqlite:///path/to/co.sqlite` | File-backed sqlite (stdlib, no deps) |
+
+In-memory copies are still maintained for fast reads; durable storage is
+written-through. Pending HITL actions and patient state are replayed on
+process restart so a crash does not lose work.
+
+### ICD-10 / CPT data
+
+* **ICD-10-CM:** ~190 curated codes from the **CMS FY2025** public-domain
+  release. For the full ~70k-code set, hand the CMS XML to
+  `data.icd10_cpt.load_icd10_cm_xml(path)` at startup.
+* **CPT®:** intentionally **empty by default** (AMA-licensed; not
+  redistributable). Plug in your licensed JSONL via
+  `data.icd10_cpt.load_cpt_jsonl(path)`.
+* **Protocol thresholds:** pinned to specific cited guideline versions
+  (JNC-8 / ACC-AHA 2017, ADA 2024, AHA/ACC/HFSA 2022, GOLD 2024, KDIGO 2024).
+  Inspect at runtime via `data.protocols.protocol_versions()`.
 
 ## Safety & compliance
 
