@@ -135,6 +135,29 @@ def test_audit_log_persists(tmp_path):
     s2.close()
 
 
+def test_upsert_patient_persists_before_hitl(tmp_path):
+    """Regression: upsert_patient / ingest_vitals / ingest_labs must persist
+    immediately, not wait for an HITL confirmation. Caught by Devin Review on PR #2.
+    """
+    db = tmp_path / "co.sqlite"
+    s1 = SqliteStorage(str(db))
+    orch1 = ClinicalOrchestrator(storage=s1)
+    orch1.upsert_patient("P-CRASH", name="Pat", conditions=["diabetes"], allergies=["sulfa"])
+    orch1.ingest_vitals("P-CRASH", [{"name": "systolic_bp", "value": 150, "unit": "mmHg"}])
+    orch1.ingest_labs("P-CRASH", [{"name": "glucose", "value": 220, "unit": "mg/dL"}])
+    s1.close()  # simulate crash with NO HITL confirmations
+
+    s2 = SqliteStorage(str(db))
+    loaded = s2.load_patient("P-CRASH")
+    assert loaded is not None
+    assert loaded.name == "Pat"
+    assert "diabetes" in loaded.conditions
+    assert "sulfa" in loaded.allergies
+    assert any(v.name == "systolic_bp" and v.value == 150 for v in loaded.vitals)
+    assert any(lab.name == "glucose" and lab.value == 220 for lab in loaded.labs)
+    s2.close()
+
+
 def test_orchestrator_with_sqlite_round_trip(tmp_path):
     """End-to-end: run a documentation flow on sqlite, restart, see committed state."""
     db = tmp_path / "co.sqlite"

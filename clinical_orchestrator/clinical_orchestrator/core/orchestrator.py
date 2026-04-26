@@ -123,6 +123,9 @@ class ClinicalOrchestrator:
                 continue
             if hasattr(patient, k):
                 setattr(patient, k, v)
+        # Persist demographic / allergy / condition updates immediately so a
+        # crash before any HITL confirmation does not lose them.
+        self.registry.save(patient)
         return patient
 
     def ingest_transcript(self, patient_id: str, transcript: str) -> dict[str, Any]:
@@ -134,6 +137,8 @@ class ClinicalOrchestrator:
         patient = self.registry.get_or_create(patient_id)
         for v in vitals:
             patient.add_vital(VitalReading(name=v["name"], value=float(v["value"]), unit=v.get("unit", "")))
+        # Vitals are durable raw observations; persist before running protocols.
+        self.registry.save(patient)
         return self.debugger.call("chronic_care", self.chronic_care.run, patient)
 
     def ingest_labs(self, patient_id: str, labs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -144,6 +149,8 @@ class ClinicalOrchestrator:
                 name=lab["name"], value=float(lab["value"]), unit=lab.get("unit", ""),
                 reference_low=lab.get("reference_low"), reference_high=lab.get("reference_high"),
             ))
+        # Same reasoning as ingest_vitals — labs survive a crash even before HITL.
+        self.registry.save(patient)
         return self.debugger.call("chronic_care", self.chronic_care.run, patient)
 
     def diagnose(
