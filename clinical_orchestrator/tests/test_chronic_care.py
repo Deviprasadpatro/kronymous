@@ -42,11 +42,24 @@ def test_recommendations_match_conditions():
 
 
 def test_kpi_deltas_for_heart_failure_patient():
+    """Canonical 'heart failure' (with space) — the form used in cli/demo and orchestrator tests."""
     agent = _agent()
-    p = PatientContext(patient_id="P1", conditions=["heart_failure"])
+    p = PatientContext(patient_id="P1", conditions=["heart failure"])
     p.add_vital(VitalReading(name="systolic_bp", value=180, unit="mmHg"))
     p.add_lab(LabResult(name="bnp", value=900, unit="pg/mL"))
     out = agent.run(p)
     deltas = out["suggestion"]["kpi_deltas"]
     assert "alos_days" in deltas
     assert "readmission_30d_pct" in deltas
+
+
+def test_kpi_deltas_for_heart_failure_alternate_spellings():
+    """Underscore + CHF abbreviation should also trigger the readmission KPI."""
+    agent = _agent()
+    for spelling in ("heart_failure", "CHF", "Decompensated CHF exacerbation"):
+        p = PatientContext(patient_id="P1", conditions=[spelling])
+        p.add_vital(VitalReading(name="systolic_bp", value=180, unit="mmHg"))
+        out = agent.run(p)
+        assert "readmission_30d_pct" in out["suggestion"]["kpi_deltas"], (
+            f"readmission KPI missing for condition spelling={spelling!r}"
+        )

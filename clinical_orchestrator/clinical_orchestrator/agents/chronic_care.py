@@ -134,7 +134,10 @@ class ChronicCareAgent(Agent):
         if crit:
             delta["bed_occupancy_pct"] = round(crit * 0.4, 2)
         # Readmission risk projection.
-        if any("heart_failure" in patient.conditions or "chf" in c.lower() for c in patient.conditions):
+        if any(
+            "heart failure" in c.lower() or "heart_failure" in c.lower() or "chf" in c.lower()
+            for c in patient.conditions
+        ):
             delta["readmission_30d_pct"] = round(len(deviations) * 0.6, 2)
         # Prefix sign for clarity in reports.
         return {k: v for k, v in delta.items() if v != 0 and k in baseline}
