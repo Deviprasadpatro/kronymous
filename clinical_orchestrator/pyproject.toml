@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clinical-orchestrator"
+version = "0.1.0"
+description = "Agentic AI Clinical Orchestrator: Documentation, Chronic Care, and Diagnostic agents with HITL safety and cross-module collaboration."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Deviprasad Patro" }]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "ruff>=0.4",
+]
+llm = [
+    "openai>=1.20",
+]
+
+[project.scripts]
+clinical-orchestrator = "clinical_orchestrator.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["clinical_orchestrator*"]
+exclude = ["tests*", "examples*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
