@@ -8,4 +8,9 @@ __pycache__/
 venv/
 env/
 audit.log.jsonl
+tmp/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 .env

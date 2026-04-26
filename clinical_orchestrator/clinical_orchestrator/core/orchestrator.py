@@ -15,11 +15,13 @@ from ..agents.chronic_care import ChronicCareAgent
 from ..agents.diagnostic import DiagnosticAgent
 from ..agents.documentation import DocumentationAgent
 from .audit import AuditLog
+from .bus_backend import make_backend
 from .context import PatientContext, PatientRegistry
 from .event_bus import ClinicalEvent, EventBus
 from .llm import LLMProvider
 from .safety import PendingAction, SafetyGate
 from .self_debug import SelfDebugger
+from .storage import Storage, make_storage
 
 
 class ClinicalOrchestrator:
@@ -32,13 +34,18 @@ class ClinicalOrchestrator:
         audit: AuditLog | None = None,
         llm: LLMProvider | None = None,
         debugger: SelfDebugger | None = None,
+        storage: Storage | None = None,
     ) -> None:
-        self.bus = bus or EventBus()
-        self.safety = safety or SafetyGate()
-        self.audit = audit or AuditLog()
-        self.llm = llm or LLMProvider()
+        # Resolve a single shared storage backend (defaults: in-memory).
+        self.storage = storage if storage is not None else make_storage()
+        # Resolve transport backend for the event bus.
+        self.bus = bus or EventBus(backend=make_backend())
+        self.safety = safety or SafetyGate(storage=self.storage)
+        self.audit = audit or AuditLog(storage=self.storage)
         self.debugger = debugger or SelfDebugger()
-        self.registry = PatientRegistry()
+        # LLM router sees the debugger so calls show up in /health.
+        self.llm = llm or LLMProvider(debugger=self.debugger)
+        self.registry = PatientRegistry(storage=self.storage)
 
         self.documentation = DocumentationAgent(self.bus, self.safety, self.audit, self.llm)
         self.chronic_care = ChronicCareAgent(self.bus, self.safety, self.audit, self.llm)
@@ -116,6 +123,9 @@ class ClinicalOrchestrator:
                 continue
             if hasattr(patient, k):
                 setattr(patient, k, v)
+        # Persist demographic / allergy / condition updates immediately so a
+        # crash before any HITL confirmation does not lose them.
+        self.registry.save(patient)
         return patient
 
     def ingest_transcript(self, patient_id: str, transcript: str) -> dict[str, Any]:
@@ -127,6 +137,8 @@ class ClinicalOrchestrator:
         patient = self.registry.get_or_create(patient_id)
         for v in vitals:
             patient.add_vital(VitalReading(name=v["name"], value=float(v["value"]), unit=v.get("unit", "")))
+        # Vitals are durable raw observations; persist before running protocols.
+        self.registry.save(patient)
         return self.debugger.call("chronic_care", self.chronic_care.run, patient)
 
     def ingest_labs(self, patient_id: str, labs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -137,6 +149,8 @@ class ClinicalOrchestrator:
                 name=lab["name"], value=float(lab["value"]), unit=lab.get("unit", ""),
                 reference_low=lab.get("reference_low"), reference_high=lab.get("reference_high"),
             ))
+        # Same reasoning as ingest_vitals — labs survive a crash even before HITL.
+        self.registry.save(patient)
         return self.debugger.call("chronic_care", self.chronic_care.run, patient)
 
     def diagnose(
@@ -208,6 +222,9 @@ class ClinicalOrchestrator:
             for step in payload.get("next_steps", []):
                 if step not in patient.care_plan:
                     patient.care_plan.append(step)
+        # Persist the mutated patient state to durable storage (no-op for
+        # MemoryStorage, sqlite UPSERT for SqliteStorage).
+        self.registry.save(patient)
 
     # -- Health ----------------------------------------------------------
     def health(self) -> dict[str, Any]:
@@ -223,4 +240,7 @@ class ClinicalOrchestrator:
             "patients": len(self.registry.all()),
             "pending_reviews": len(self.safety.pending()),
             "events_seen": len(self.bus.history()),
+            "transport": self.bus.transport,
+            "storage": type(self.storage).__name__,
+            "llm_provider": self.llm.provider,
         }
